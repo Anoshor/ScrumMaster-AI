@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Check if ngrok is installed
+if ! command -v ngrok &> /dev/null; then
+    echo "ngrok is not installed. Please install it first from https://ngrok.com/download"
+    exit 1
+fi
+
+# Set environment variables from .env file
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Use PORT from .env or default to 9890
+PORT=${PORT:-9890}
+
+# Run ngrok
+echo "Starting ngrok on port $PORT..."
+ngrok http $PORT

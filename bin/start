@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Activate virtual environment if exists
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+# Set environment variables from .env file
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Run the bot using the RingCentral Chatbot Factory
+python -m ringcentral_bot_framework run

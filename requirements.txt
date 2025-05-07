@@ -1,0 +1,6 @@
+ringcentral_chatbot_factory
+jira
+openai>=0.27.0
+python-dotenv
+requests
+boto3
