@@ -7,8 +7,8 @@ import json
 import logging
 import openai
 from datetime import datetime
-from config import meeting_memory
-from services.jira_service import update_jira_ticket
+from config import meeting_memory, JIRA_HOST
+from services.jira_service import update_jira_ticket, get_issue
 
 # Configure OpenAI
 openai.api_key = os.environ.get('OPENAI_API_KEY')
@@ -37,7 +37,7 @@ def analyze_transcript(transcript):
     Format the response as JSON with these keys:
     - action_items: list of {{"task": "...", "assignee": "..."}}
     - ticket_updates: list of {{"ticket_key": "...", "status": "...", "comment": "..."}}
-    - story_points: list of {{"ticket_key": "...", "points": N}}
+    - story_points: list of {{"ticket_key": "...", "points": number}}
     - blockers: list of {{"description": "...", "for_ticket": "...", "mentioned_by": "..."}}
     - decisions: list of {{"topic": "...", "decision": "..."}}
     - attendees: list of names of people who spoke in the meeting
@@ -70,18 +70,18 @@ def mock_meeting_data():
     return {
         "action_items": [
             {"task": "Update API documentation", "assignee": "John"},
-            {"task": "Fix login bug", "assignee": "Sarah"}
+            {"task": "Fix login bug in mobile app", "assignee": "Sarah"}
         ],
         "ticket_updates": [
-            {"ticket_key": "PROJ-123", "status": "In Progress", "comment": "Working on authentication flow"},
-            {"ticket_key": "PROJ-124", "status": "Done", "comment": "UI improvements completed"}
+            {"ticket_key": "RCVNC-123", "status": "In Progress", "comment": "Working on authentication flow"},
+            {"ticket_key": "RCVNC-124", "status": "Done", "comment": "UI improvements completed"}
         ],
         "story_points": [
-            {"ticket_key": "PROJ-125", "points": 5},
-            {"ticket_key": "PROJ-126", "points": 3}
+            {"ticket_key": "RCVNC-125", "points": 5},
+            {"ticket_key": "RCVNC-126", "points": 3}
         ],
         "blockers": [
-            {"description": "Waiting for design team input", "for_ticket": "PROJ-127", "mentioned_by": "David"}
+            {"description": "Waiting for design team input", "for_ticket": "RCVNC-127", "mentioned_by": "David"}
         ],
         "decisions": [
             {"topic": "API Design", "decision": "We will use REST architecture for the new endpoints"}
@@ -208,7 +208,8 @@ def search_meeting_memory(topic=None):
             
             if topic.lower() in transcript or topic.lower() in summary:
                 timestamp = data.get("timestamp", "Unknown")
-                results.append(f"- Meeting on {timestamp}: Found mention of '{topic}'")
+                timestamp_display = datetime.fromisoformat(timestamp) if timestamp != "Unknown" else "Unknown time"
+                results.append(f"- Meeting on {timestamp_display}: Found mention of '{topic}'")
         
         if results:
             return f"**Search Results for '{topic}'**\n\n" + "\n".join(results)
@@ -219,12 +220,13 @@ def search_meeting_memory(topic=None):
         meetings_list = []
         for meeting_id, data in meeting_memory.items():
             timestamp = data.get("timestamp", "Unknown")
+            timestamp_display = datetime.fromisoformat(timestamp) if timestamp != "Unknown" else "Unknown time"
             summary = data.get("summary", {})
             decisions = summary.get("decisions", [])
             topics = [d.get("topic", "Unknown topic") for d in decisions]
             topics_text = ", ".join(topics[:3]) if topics else "No specific topics"
             
-            meetings_list.append(f"- Meeting on {timestamp}: {topics_text}")
+            meetings_list.append(f"- Meeting on {timestamp_display}: {topics_text}")
         
         if meetings_list:
             return "**Recorded Meetings**\n\n" + "\n".join(meetings_list)
@@ -233,10 +235,17 @@ def search_meeting_memory(topic=None):
 
 def generate_daily_summary(sprint_id=None):
     """Generate a daily summary of sprint activity."""
-    # This would normally query JIRA for today's activity
-    # For now, return a simple placeholder
+    # Use JIRA API to get recent activity
+    
+    # This is a placeholder implementation
+    # In a real implementation, you would:
+    # 1. Query JIRA for today's activity in the sprint
+    # 2. Get updated tickets, new tickets, and completed tickets
+    # 3. Calculate progress metrics
+    # 4. Format the summary
+    
     return """
-    **Daily Sprint Summary**
+    **Daily Sprint Summary** (Generated: May 8, 2025)
     
     **Today's Progress**
     - 3 tickets moved to Done
@@ -244,7 +253,7 @@ def generate_daily_summary(sprint_id=None):
     - 5 story points completed
     
     **Active Blockers**
-    - PROJ-123: Waiting for design team input
+    - RCVNC-123: Waiting for design team input
     
     **Upcoming Deadlines**
     - Sprint ends in 3 days
@@ -253,4 +262,170 @@ def generate_daily_summary(sprint_id=None):
     **Team Velocity**
     - Current: 4.2 points/day
     - Expected: 5 points/day
+    
+    **Tickets to Review**
+    - RCVNC-124: UI improvements completed (ready for code review)
     """
+
+def get_meeting_history_for_ticket(ticket_key):
+    """Get meeting history related to a specific ticket."""
+    if not meeting_memory:
+        return "No meeting records found for this ticket."
+        
+    ticket_mentions = []
+    
+    for meeting_id, data in meeting_memory.items():
+        timestamp = data.get("timestamp", "Unknown")
+        timestamp_display = datetime.fromisoformat(timestamp) if timestamp != "Unknown" else "Unknown time"
+        summary = data.get("summary", {})
+        
+        # Check for ticket mentions in different sections
+        mentioned = False
+        mention_context = []
+        
+        # Check ticket updates
+        for update in summary.get("ticket_updates", []):
+            if update.get("ticket_key") == ticket_key:
+                status_text = f" → {update.get('status')}" if update.get("status") else ""
+                comment_text = f": {update.get('comment')}" if update.get("comment") else ""
+                mention_context.append(f"Status update{status_text}{comment_text}")
+                mentioned = True
+        
+        # Check story points
+        for sp in summary.get("story_points", []):
+            if sp.get("ticket_key") == ticket_key:
+                mention_context.append(f"Story points estimated: {sp.get('points')}")
+                mentioned = True
+        
+        # Check blockers
+        for blocker in summary.get("blockers", []):
+            if blocker.get("for_ticket") == ticket_key:
+                mention_context.append(f"Blocker reported: {blocker.get('description')} (by {blocker.get('mentioned_by')})")
+                mentioned = True
+        
+        # If ticket was mentioned, add to results
+        if mentioned:
+            context_text = ", ".join(mention_context)
+            ticket_mentions.append(f"- Meeting on {timestamp_display}: {context_text}")
+    
+    if ticket_mentions:
+        return f"**Meeting History for {ticket_key}**\n\n" + "\n".join(ticket_mentions)
+    else:
+        return f"No meeting discussions found for ticket {ticket_key}."
+
+def extract_action_items_from_text(text):
+    """Extract action items from free-form text."""
+    if not openai.api_key:
+        logger.warning("OpenAI API key not set, using basic extraction")
+        # Basic extraction with regex could be implemented here
+        return []
+        
+    prompt = f"""
+    Extract action items from this text. An action item is a task that needs to be done, preferably with an assignee.
+    
+    Text:
+    {text}
+    
+    Format the response as JSON with a list of action items, each with:
+    - task: the task to be done
+    - assignee: the person assigned to the task (if mentioned)
+    """
+    
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You extract action items from text."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1
+        )
+        
+        # Parse the response
+        content = response.choices[0].message.content
+        action_items = json.loads(content)
+        
+        return action_items.get("action_items", [])
+        
+    except Exception as e:
+        logger.error(f"Error extracting action items: {str(e)}")
+        return []
+
+def parse_transcript_file(file_path):
+    """Parse a transcript file."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            transcript = f.read()
+        return transcript
+    except Exception as e:
+        logger.error(f"Error parsing transcript file: {str(e)}")
+        return None
+
+def process_transcript_content(transcript_content):
+    """Process transcript content from a file or input."""
+    if not transcript_content:
+        return None
+        
+    # Analyze the transcript
+    meeting_data = analyze_transcript(transcript_content)
+    
+    if meeting_data:
+        # Store in meeting memory
+        meeting_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        meeting_memory[meeting_id] = {
+            "transcript": transcript_content,
+            "summary": meeting_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"Stored meeting transcript with ID {meeting_id}")
+        
+        # Apply actions
+        action_results = apply_meeting_actions(meeting_data)
+        logger.info(f"Applied actions: {len(action_results['ticket_updates'])} ticket updates, {len(action_results['blockers_added'])} blockers added")
+        
+        # Return meeting data and action results
+        return {
+            "meeting_id": meeting_id,
+            "meeting_data": meeting_data,
+            "action_results": action_results
+        }
+    
+    return None
+
+def get_recent_meetings(max_count=5):
+    """Get the most recent meetings."""
+    if not meeting_memory:
+        return []
+        
+    # Sort meetings by timestamp (newest first)
+    sorted_meetings = sorted(
+        [(meeting_id, data) for meeting_id, data in meeting_memory.items()],
+        key=lambda x: x[1].get("timestamp", "0"),
+        reverse=True
+    )
+    
+    # Take the most recent ones
+    recent_meetings = sorted_meetings[:max_count]
+    
+    # Format the results
+    formatted_meetings = []
+    for meeting_id, data in recent_meetings:
+        timestamp = data.get("timestamp", "Unknown")
+        timestamp_display = datetime.fromisoformat(timestamp) if timestamp != "Unknown" else "Unknown time"
+        summary = data.get("summary", {})
+        
+        # Get key metrics
+        action_items_count = len(summary.get("action_items", []))
+        ticket_updates_count = len(summary.get("ticket_updates", []))
+        decisions_count = len(summary.get("decisions", []))
+        
+        formatted_meetings.append({
+            "meeting_id": meeting_id,
+            "timestamp": timestamp_display,
+            "action_items_count": action_items_count,
+            "ticket_updates_count": ticket_updates_count,
+            "decisions_count": decisions_count
+        })
+    
+    return formatted_meetings
